@@ -12,12 +12,10 @@ from argparse import ArgumentParser
 # Torch
 import torch
 import torch.nn as nn
+import wandb as wandb
 from torch.distributions import Normal
 from torch.utils.data import DataLoader
 from torchvision.utils import make_grid
-
-# TensorboardX
-from tensorboardX import SummaryWriter
 
 # Ignite
 from ignite.contrib.handlers import ProgressBar
@@ -27,7 +25,8 @@ from ignite.metrics import RunningAverage
 
 from gqn import GenerativeQueryNetwork, partition, Annealer
 from data.shepardmetzler import ShepardMetzler
-#from placeholder import PlaceholderData as ShepardMetzler
+
+# from placeholder import PlaceholderData as ShepardMetzler
 
 cuda = torch.cuda.is_available()
 device = torch.device("cuda:0" if cuda else "cpu")
@@ -47,8 +46,10 @@ if __name__ == '__main__':
     parser.add_argument('--log_dir', type=str, help='location of logging', default="log")
     parser.add_argument('--fraction', type=float, help='how much of the data to use', default=1.0)
     parser.add_argument('--workers', type=int, help='number of data loading workers', default=4)
-    parser.add_argument('--data_parallel', type=bool, help='whether to parallelise based on data (default: False)', default=False)
-    parser.add_argument('--pos_enc', type=bool, help='whether to use positional encoding (default: False)', default=False)
+    parser.add_argument('--data_parallel', type=bool, help='whether to parallelise based on data (default: False)',
+                        default=False)
+    parser.add_argument('--pos_enc', type=bool, help='whether to use positional encoding (default: False)',
+                        default=False)
     parser.add_argument('--checkpoint', type=str, help='restart training from checkpoint', default=None)
     args = parser.parse_args()
 
@@ -66,11 +67,13 @@ if __name__ == '__main__':
 
     # Load the dataset
     train_dataset = ShepardMetzler(root_dir=args.data_dir, fraction=args.fraction, use_pos_enc=args.pos_enc)
-    valid_dataset = ShepardMetzler(root_dir=args.data_dir, fraction=args.fraction, train=False, use_pos_enc=args.pos_enc)
+    valid_dataset = ShepardMetzler(root_dir=args.data_dir, fraction=args.fraction, train=False,
+                                   use_pos_enc=args.pos_enc)
 
     kwargs = {'num_workers': args.workers, 'pin_memory': True} if cuda else {}
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, **kwargs)
     valid_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=True, **kwargs)
+
 
     def step(engine, batch):
         model.train()
@@ -86,8 +89,8 @@ if __name__ == '__main__':
         sigma = next(sigma_scheme)
         ll = Normal(x_mu, sigma).log_prob(x_q)
 
-        likelihood     = torch.mean(torch.sum(ll, dim=[1, 2, 3]))
-        kl_divergence  = torch.mean(torch.sum(kl, dim=[1, 2, 3]))
+        likelihood = torch.mean(torch.sum(ll, dim=[1, 2, 3]))
+        kl_divergence = torch.mean(torch.sum(kl, dim=[1, 2, 3]))
 
         # Evidence lower bound
         elbo = likelihood - kl_divergence
@@ -105,6 +108,7 @@ if __name__ == '__main__':
                 group["lr"] = mu * math.sqrt(1 - 0.999 ** i) / (1 - 0.9 ** i)
 
         return {"elbo": elbo.item(), "kl": kl_divergence.item(), "sigma": sigma, "mu": mu}
+
 
     # Trainer and metrics
     trainer = Engine(step)
@@ -124,19 +128,24 @@ if __name__ == '__main__':
     }
     checkpoint_handler = ModelCheckpoint("./", "checkpoint", n_saved=3,
                                          require_empty=False, global_step_transform=global_step_from_engine(trainer))
-    trainer.add_event_handler(event_name=Events.EPOCH_COMPLETED, handler=checkpoint_handler,
-                              to_save=to_save)
+    trainer.add_event_handler(event_name=Events.EPOCH_COMPLETED, handler=checkpoint_handler, to_save=to_save)
 
     timer = Timer(average=True).attach(trainer, start=Events.EPOCH_STARTED, resume=Events.ITERATION_STARTED,
-                 pause=Events.ITERATION_COMPLETED, step=Events.ITERATION_COMPLETED)
+                                       pause=Events.ITERATION_COMPLETED, step=Events.ITERATION_COMPLETED)
 
-    # Tensorbard writer
-    writer = SummaryWriter(log_dir=args.log_dir)
+    run = wandb.init(
+        project="gqn",
+        config={
+            "dataset": "ShepardMetzler5",
+            "fraction": args.fraction,
+            "positional_encoding": args.pos_enc
+        })
+
 
     @trainer.on(Events.ITERATION_COMPLETED)
     def log_metrics(engine):
-        for key, value in engine.state.metrics.items():
-            writer.add_scalar("training/{}".format(key), value, engine.state.iteration)
+        run.log(engine.state.metrics)
+
 
     @trainer.on(Events.EPOCH_COMPLETED)
     def save_images(engine):
@@ -153,8 +162,11 @@ if __name__ == '__main__':
             x_mu = x_mu.detach().cpu().float()
             r = r.detach().cpu().float()
 
-            writer.add_image("representation", make_grid(r), engine.state.epoch)
-            writer.add_image("reconstruction", make_grid(x_mu), engine.state.epoch)
+            run.log({
+                "representation": make_grid(r),
+                "reconstruction": make_grid(x_mu)
+            })
+
 
     @trainer.on(Events.EPOCH_COMPLETED)
     def validate(engine):
@@ -176,22 +188,25 @@ if __name__ == '__main__':
             # Evidence lower bound
             elbo = likelihood - kl_divergence
 
-            writer.add_scalar("validation/elbo", elbo.item(), engine.state.epoch)
-            writer.add_scalar("validation/kl", kl_divergence.item(), engine.state.epoch)
+            run.log({
+                "validation/elbo": elbo.item(),
+                "validation/kl": kl_divergence.item()
+            })
+
 
     @trainer.on(Events.EXCEPTION_RAISED)
     def handle_exception(engine, e):
-        writer.close()
         engine.terminate()
         if isinstance(e, KeyboardInterrupt) and (engine.state.iteration > 1):
             import warnings
             warnings.warn('KeyboardInterrupt caught. Exiting gracefully.')
-            checkpoint_handler(engine, { 'model_exception': model })
-        else: raise e
+            checkpoint_handler(engine, {'model_exception': model})
+        else:
+            raise e
+
 
     if args.checkpoint is not None:
         checkpoint = torch.load(args.checkpoint, map_location=device)
         Checkpoint.load_objects(to_load=to_save, checkpoint=checkpoint)
 
     trainer.run(train_loader, args.n_epochs)
-    writer.close()
