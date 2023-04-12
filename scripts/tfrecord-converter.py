@@ -14,8 +14,6 @@ from functools import partial
 from itertools import islice, chain
 from argparse import ArgumentParser
 
-# disable logging and gpu
-tf.logging.set_verbosity(tf.logging.ERROR)
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 POSE_DIM, IMG_DIM, SEQ_DIM = 5, 64, 15
@@ -34,10 +32,10 @@ def process(record):
     Processes a tf-record into a numpy (image, pose) tuple.
     """
     kwargs = dict(dtype=tf.uint8, back_prop=False)
-    for data in tf.python_io.tf_record_iterator(record):
-        instance = tf.parse_single_example(data, {
-            'frames': tf.FixedLenFeature(shape=SEQ_DIM, dtype=tf.string),
-            'cameras': tf.FixedLenFeature(shape=SEQ_DIM * POSE_DIM, dtype=tf.float32)
+    for data in tf.compat.v1.python_io.tf_record_iterator(record):
+        instance = tf.io.parse_single_example(data, {
+            'frames': tf.io.FixedLenFeature(shape=SEQ_DIM, dtype=tf.string),
+            'cameras': tf.io.FixedLenFeature(shape=SEQ_DIM * POSE_DIM, dtype=tf.float32)
         })
 
         # Get data
@@ -69,7 +67,6 @@ def convert(record, batch_size):
             torch.save(list(batch), f)
 
 if __name__ == '__main__':
-    tf.enable_eager_execution()
     parser = ArgumentParser(description='Convert gqn tfrecords to gzip files.')
     parser.add_argument('base_dir', nargs=1,
                         help='base directory of gqn dataset')

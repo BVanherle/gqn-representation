@@ -22,7 +22,7 @@ from tensorboardX import SummaryWriter
 # Ignite
 from ignite.contrib.handlers import ProgressBar
 from ignite.engine import Engine, Events
-from ignite.handlers import ModelCheckpoint, Timer
+from ignite.handlers import ModelCheckpoint, Timer, Checkpoint, global_step_from_engine
 from ignite.metrics import RunningAverage
 
 from gqn import GenerativeQueryNetwork, partition, Annealer
@@ -48,6 +48,7 @@ if __name__ == '__main__':
     parser.add_argument('--fraction', type=float, help='how much of the data to use', default=1.0)
     parser.add_argument('--workers', type=int, help='number of data loading workers', default=4)
     parser.add_argument('--data_parallel', type=bool, help='whether to parallelise based on data (default: False)', default=False)
+    parser.add_argument('--checkpoint', type=str, help='restart training from checkpoint', default=None)
     args = parser.parse_args()
 
     # Create model and optimizer
@@ -112,11 +113,16 @@ if __name__ == '__main__':
     ProgressBar().attach(trainer, metric_names=metric_names)
 
     # Model checkpointing
-    checkpoint_handler = ModelCheckpoint("./", "checkpoint", save_interval=1, n_saved=3,
-                                         require_empty=False)
+    to_save = {
+        'model': model,
+        'optimizer': optimizer,
+        'sigma_scheme': sigma_scheme,
+        "mu_scheme": mu_scheme
+    }
+    checkpoint_handler = ModelCheckpoint("./", "checkpoint", n_saved=3,
+                                         require_empty=False, global_step_transform=global_step_from_engine(trainer))
     trainer.add_event_handler(event_name=Events.EPOCH_COMPLETED, handler=checkpoint_handler,
-                              to_save={'model': model.state_dict, 'optimizer': optimizer.state_dict,
-                                       'annealers': (sigma_scheme.data, mu_scheme.data)})
+                              to_save=to_save)
 
     timer = Timer(average=True).attach(trainer, start=Events.EPOCH_STARTED, resume=Events.ITERATION_STARTED,
                  pause=Events.ITERATION_COMPLETED, step=Events.ITERATION_COMPLETED)
@@ -179,6 +185,10 @@ if __name__ == '__main__':
             warnings.warn('KeyboardInterrupt caught. Exiting gracefully.')
             checkpoint_handler(engine, { 'model_exception': model })
         else: raise e
+
+    if args.checkpoint is not None:
+        checkpoint = torch.load(args.checkpoint, map_location=device)
+        Checkpoint.load_objects(to_load=to_save, checkpoint=checkpoint)
 
     trainer.run(train_loader, args.n_epochs)
     writer.close()

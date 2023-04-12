@@ -13,6 +13,15 @@ class Annealer(object):
     def __repr__(self):
         return {"init": self.init, "delta": self.delta, "steps": self.steps, "s": self.s}
 
+    def state_dict(self):
+        return self.__repr__()
+
+    def load_state_dict(self, state):
+        self.init = state["init"]
+        self.delta = state["delta"]
+        self.steps = state["steps"]
+        self.s = state["s"]
+
     def __iter__(self):
         return self
 
