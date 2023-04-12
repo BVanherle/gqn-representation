@@ -26,7 +26,7 @@ from ignite.handlers import ModelCheckpoint, Timer, Checkpoint, global_step_from
 from ignite.metrics import RunningAverage
 
 from gqn import GenerativeQueryNetwork, partition, Annealer
-from shepardmetzler import ShepardMetzler
+from data.shepardmetzler import ShepardMetzler
 #from placeholder import PlaceholderData as ShepardMetzler
 
 cuda = torch.cuda.is_available()
