@@ -12,17 +12,20 @@ def posenc(x, l = 6):
     return torch.concat(rets, -1)
 
 
-def transform_viewpoint(v):
+def transform_viewpoint(v, use_pos_enc = False):
     """
     Transforms the viewpoint vector into a consistent
     representation
     """
-    w, z = torch.split(v, 3, dim=-1)
+    pos, z = torch.split(v, 3, dim=-1)
     y, p = torch.split(z, 1, dim=-1)
 
-    pos = posenc(w, 10)
-    view = torch.cat([y, p], dim=-1)
-    view = posenc(view, 4)
+    if use_pos_enc:
+        view = torch.cat([y, p], dim=-1)
+        pos = posenc(pos, 10)
+        view = posenc(view, 4)
+    else:
+        view = torch.cat([torch.cos(y), torch.sin(y), torch.cos(p), torch.sin(p)], dim=-1)
 
     v_hat = torch.cat([pos, view], dim=-1)
 
@@ -42,7 +45,7 @@ class ShepardMetzler(Dataset):
     :param target_transform: transform on viewpoints
     """
 
-    def __init__(self, root_dir, train=True, transform=None, fraction=1.0, target_transform=transform_viewpoint):
+    def __init__(self, root_dir, train=True, transform=None, fraction=1.0, target_transform=transform_viewpoint, use_pos_enc=False):
         super(ShepardMetzler, self).__init__()
         assert fraction > 0.0 and fraction <= 1.0
         prefix = "train" if train else "test"
@@ -51,6 +54,7 @@ class ShepardMetzler(Dataset):
         self.records = self.records[:int(len(self.records) * fraction)]
         self.transform = transform
         self.target_transform = target_transform
+        self.use_pos_enc = use_pos_enc
 
     def __len__(self):
         return len(self.records)
@@ -73,6 +77,6 @@ class ShepardMetzler(Dataset):
 
         viewpoints = torch.FloatTensor(viewpoints)
         if self.target_transform:
-            viewpoints = self.target_transform(viewpoints)
+            viewpoints = self.target_transform(viewpoints, use_pos_enc=self.use_pos_enc)
 
         return images, viewpoints

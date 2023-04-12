@@ -48,11 +48,14 @@ if __name__ == '__main__':
     parser.add_argument('--fraction', type=float, help='how much of the data to use', default=1.0)
     parser.add_argument('--workers', type=int, help='number of data loading workers', default=4)
     parser.add_argument('--data_parallel', type=bool, help='whether to parallelise based on data (default: False)', default=False)
+    parser.add_argument('--pos_enc', type=bool, help='whether to use positional encoding (default: False)', default=False)
     parser.add_argument('--checkpoint', type=str, help='restart training from checkpoint', default=None)
     args = parser.parse_args()
 
+    v_dim = 7 if not args.pos_enc else 81
+
     # Create model and optimizer
-    model = GenerativeQueryNetwork(x_dim=3, v_dim=7, r_dim=256, h_dim=128, z_dim=64, L=8).to(device)
+    model = GenerativeQueryNetwork(x_dim=3, v_dim=v_dim, r_dim=256, h_dim=128, z_dim=64, L=8).to(device)
     model = nn.DataParallel(model) if args.data_parallel else model
 
     optimizer = torch.optim.Adam(model.parameters(), lr=5 * 10 ** (-5))
@@ -62,8 +65,8 @@ if __name__ == '__main__':
     mu_scheme = Annealer(5 * 10 ** (-6), 5 * 10 ** (-6), 1.6 * 10 ** 5)
 
     # Load the dataset
-    train_dataset = ShepardMetzler(root_dir=args.data_dir, fraction=args.fraction)
-    valid_dataset = ShepardMetzler(root_dir=args.data_dir, fraction=args.fraction, train=False)
+    train_dataset = ShepardMetzler(root_dir=args.data_dir, fraction=args.fraction, use_pos_enc=args.pos_enc)
+    valid_dataset = ShepardMetzler(root_dir=args.data_dir, fraction=args.fraction, train=False, use_pos_enc=args.pos_enc)
 
     kwargs = {'num_workers': args.workers, 'pin_memory': True} if cuda else {}
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, **kwargs)

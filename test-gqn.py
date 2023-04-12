@@ -27,7 +27,7 @@ def query_context_plot(images, indices):
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-dataset = ShepardMetzler("I:/Datasets/GQN/shepard_metzler_5_parts", train=False)
+dataset = ShepardMetzler("I:/Datasets/GQN/shepard_metzler_5_parts", train=False, use_pos_enc=True)
 loader = DataLoader(dataset, batch_size=1, shuffle=True)
 state_dict = torch.load("./trained_models/shepardmetzler_200.pt")
 
